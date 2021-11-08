@@ -1,5 +1,6 @@
 # Author: Jacek Komorowski
 # Warsaw University of Technology
+# Modified by: Kamil Zywanowski, Adam Banaszczyk, Michal Nowicki (Poznan University of Technology 2021)
 
 # Train on Oxford dataset (from PointNetVLAD paper) using BatchHard hard negative mining.
 
@@ -240,21 +241,36 @@ def do_train(dataloaders, params: MinkLocParams, debug=False, visualize=False):
     config_name = os.path.split(params.params_path)[1]
     _, model_name = os.path.split(model_pathname)
     prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
-    export_eval_stats("experiment_results.txt", prefix, final_eval_stats)
+    export_eval_stats("experiment_results.txt", prefix, final_eval_stats, params.dataset_name)
 
 
-def export_eval_stats(file_name, prefix, eval_stats):
+def export_eval_stats(file_name, prefix, eval_stats, dataset_name):
     s = prefix
     ave_1p_recall_l = []
     ave_recall_l = []
     # Print results on the final model
     with open(file_name, "a") as f:
-        for ds in ['oxford', 'university', 'residential', 'business']:
-            ave_1p_recall = eval_stats[ds]['ave_one_percent_recall']
+        if dataset_name == 'USyd':
+            ave_1p_recall = eval_stats['usyd']['ave_one_percent_recall']
             ave_1p_recall_l.append(ave_1p_recall)
-            ave_recall = eval_stats[ds]['ave_recall'][0]
+            ave_recall = eval_stats['usyd']['ave_recall'][0]
             ave_recall_l.append(ave_recall)
             s += ", {:0.2f}, {:0.2f}".format(ave_1p_recall, ave_recall)
+
+        elif dataset_name == 'IntensityOxford':
+            ave_1p_recall = eval_stats['intensityOxford']['ave_one_percent_recall']
+            ave_1p_recall_l.append(ave_1p_recall)
+            ave_recall = eval_stats['intensityOxford']['ave_recall'][0]
+            ave_recall_l.append(ave_recall)
+            s += ", {:0.2f}, {:0.2f}".format(ave_1p_recall, ave_recall)
+
+        else:
+            for ds in ['oxford', 'university', 'residential', 'business']:
+                ave_1p_recall = eval_stats[ds]['ave_one_percent_recall']
+                ave_1p_recall_l.append(ave_1p_recall)
+                ave_recall = eval_stats[ds]['ave_recall'][0]
+                ave_recall_l.append(ave_recall)
+                s += ", {:0.2f}, {:0.2f}".format(ave_1p_recall, ave_recall)
 
         mean_1p_recall = np.mean(ave_1p_recall_l)
         mean_recall = np.mean(ave_recall_l)

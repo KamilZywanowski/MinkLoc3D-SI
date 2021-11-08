@@ -1,5 +1,6 @@
 # Author: Jacek Komorowski
 # Warsaw University of Technology
+# Modified by: Kamil Zywanowski, Adam Banaszczyk, Michal Nowicki (Poznan University of Technology 2021)
 
 # Evaluation code adapted from PointNetVlad code: https://github.com/mikacuy/pointnetvlad
 
@@ -11,9 +12,11 @@ import argparse
 import torch
 import MinkowskiEngine as ME
 import random
+import tqdm
 
 from misc.utils import MinkLocParams
 from models.model_factory import model_factory
+from datasets.dataset_utils import to_spherical
 
 DEBUG = False
 
@@ -61,10 +64,12 @@ def evaluate_dataset(model, device, params, database_sets, query_sets, log=False
 
     model.eval()
 
-    for set in database_sets:
+    print(f"Extracting database sets embeddings")
+    for set in tqdm.tqdm(database_sets):
         database_embeddings.append(get_latent_vectors(model, set, device, params))
 
-    for set in query_sets:
+    print(f"Extracting query sets embeddings")
+    for set in tqdm.tqdm(query_sets):
         query_embeddings.append(get_latent_vectors(model, set, device, params))
 
     for i in range(len(query_sets)):
@@ -87,16 +92,40 @@ def evaluate_dataset(model, device, params, database_sets, query_sets, log=False
     return stats
 
 
-def load_pc(file_name, params):
-    # returns Nx3 matrix
-    file_path = os.path.join(params.dataset_folder, file_name)
-    pc = np.fromfile(file_path, dtype=np.float64)
-    # coords are within -1..1 range in each dimension
-    assert pc.shape[0] == params.num_points * 3, "Error in point cloud shape: {}".format(file_path)
-    pc = np.reshape(pc, (pc.shape[0] // 3, 3))
-    pc = torch.tensor(pc, dtype=torch.float)
-    return pc
+def load_pc(filename, params):
+    # Load point cloud, does not apply any transform
+    # Returns Nx3 matrix or Nx4 matrix depending on the intensity value
+    file_path = os.path.join(params.dataset_folder, filename)
 
+    if params.dataset_name == "USyd":
+        pc = np.fromfile(file_path, dtype=np.float32).reshape([-1, 4])
+    elif params.dataset_name == "IntensityOxford":
+        pc = np.fromfile(file_path, dtype=np.float64).reshape([-1, 4])
+    elif params.dataset_name == "Oxford":
+        pc = np.fromfile(file_path, dtype=np.float64).reshape([-1, 3])
+        assert pc.size == params.num_points * 3, "Error in point cloud shape: {}".format(file_path)
+
+    # remove intensity for models which are not using it
+    if params.model_params.version in ['MinkLoc3D', 'MinkLoc3D-S']:
+        pc = pc[:, :3]
+    # limit distance
+    pc = pc[np.linalg.norm(pc[:, :3], axis=1) < params.max_distance]
+
+    # convert to spherical coordinates in -S versions
+    if params.model_params.version in ['MinkLoc3D-S', 'MinkLoc3D-SI']:
+        pc = to_spherical(pc, params.dataset_name)
+
+    # shuffle points in case they are randomly subsampled later
+    np.random.shuffle(pc)
+
+    pc = torch.tensor(pc, dtype=torch.float)
+    padlen = params.num_points - len(pc)
+    if padlen > 0:
+        pc = torch.nn.functional.pad(pc, (0, 0, 0, padlen), "constant", 0)
+    elif padlen < 0:
+        pc = pc[:params.num_points]
+
+    return pc
 
 def get_latent_vectors(model, set, device, params):
     # Adapted from original PointNetVLAD code
@@ -108,26 +137,37 @@ def get_latent_vectors(model, set, device, params):
     """
 
     if DEBUG:
-        embeddings =  np.random.rand(len(set), 256)
+        embeddings = np.random.rand(len(set), 256)
         return embeddings
 
     model.eval()
     embeddings_l = []
-    for elem_ndx in set:
+    for i, elem_ndx in enumerate(set):
         x = load_pc(set[elem_ndx]["query"], params)
-
         with torch.no_grad():
-            # coords are (n_clouds, num_points, channels) tensor
-            coords = ME.utils.sparse_quantize(coords=x,
-                                              quantization_size=params.model_params.mink_quantization_size)
-            bcoords = ME.utils.batched_coordinates([coords])
-            # Assign a dummy feature equal to 1 to each point
-            # Coords must be on CPU, features can be on GPU - see MinkowskiEngine documentation
-            feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32).to(device)
-            batch = {'coords': bcoords, 'features': feats}
+            # models without intensity
+            if params.model_params.version in ['MinkLoc3D', 'MinkLoc3D-S']:
+                coords = ME.utils.sparse_quantize(coordinates=x,
+                                                  quantization_size=params.model_params.mink_quantization_size)
+                bcoords = ME.utils.batched_coordinates([coords]).to(device)
+                # Assign a dummy feature equal to 1 to each point
+                # Coords must be on CPU, features can be on GPU - see MinkowskiEngine documentation
+                feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32).to(device)
 
+            # models with intensity - intensity value is averaged over voxel
+            elif params.model_params.version in ['MinkLoc3D-I', 'MinkLoc3D-SI']:
+                sparse_field = ME.TensorField(features=x[:, 3].reshape([-1, 1]),
+                                              coordinates=ME.utils.batched_coordinates(
+                                                  [x[:, :3] / np.array(params.model_params.mink_quantization_size)],
+                                                  dtype=torch.int),
+                                              quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE,
+                                              minkowski_algorithm=ME.MinkowskiAlgorithm.SPEED_OPTIMIZED).sparse()
+                feats = sparse_field.features.to(device)
+                bcoords = sparse_field.coordinates.to(device)
+
+            batch = {'coords': bcoords, 'features': feats}
             embedding = model(batch)
-            # embedding is (1, 1024) tensor
+            # embedding is (1, 256) tensor
             if params.normalize_embeddings:
                 embedding = torch.nn.functional.normalize(embedding, p=2, dim=1)  # Normalize embeddings
 
@@ -152,12 +192,12 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
 
     top1_similarity_score = []
     one_percent_retrieved = 0
-    threshold = max(int(round(len(database_output)/100.0)), 1)
+    threshold = max(int(round(len(database_output) / 100.0)), 1)
 
     num_evaluated = 0
     for i in range(len(queries_output)):
         # i is query element ndx
-        query_details = query_sets[n][i]    # {'query': path, 'northing': , 'easting': }
+        query_details = query_sets[n][i]  # {'query': path, 'northing': , 'easting': }
         true_neighbors = query_details[m]
         if len(true_neighbors) == 0:
             continue
@@ -177,14 +217,16 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
                 for k in range(len(indices[0])):
                     if indices[0][k] in true_neighbors:
                         closest_pos_ndx = indices[0][k]
-                        tp = database_sets[m][closest_pos_ndx]  # Database element: {'query': path, 'northing': , 'easting': }
+                        tp = database_sets[m][
+                            closest_pos_ndx]  # Database element: {'query': path, 'northing': , 'easting': }
                         tp_emb_dist = distances[0][k]
                         tp_world_dist = np.sqrt((query_details['northing'] - tp['northing']) ** 2 +
                                                 (query_details['easting'] - tp['easting']) ** 2)
                         break
 
                 with open("log_fp.txt", "a") as f:
-                    s = "{}, {}, {:0.2f}, {:0.2f}".format(query_details['query'], fp['query'], fp_emb_dist, fp_world_dist)
+                    s = "{}, {}, {:0.2f}, {:0.2f}".format(query_details['query'], fp['query'], fp_emb_dist,
+                                                          fp_world_dist)
                     if tp is None:
                         s += ', 0, 0, 0\n'
                     else:
@@ -197,7 +239,7 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
                 for k in range(min(len(indices[0]), 5)):
                     is_match = indices[0][k] in true_neighbors
                     e_ndx = indices[0][k]
-                    e = database_sets[m][e_ndx]     # Database element: {'query': path, 'northing': , 'easting': }
+                    e = database_sets[m][e_ndx]  # Database element: {'query': path, 'northing': , 'easting': }
                     e_emb_dist = distances[0][k]
                     s += ', {}, {:0.2f}, {}, '.format(e['query'], e_emb_dist, 1 if is_match else 0)
                 s += '\n'
@@ -216,8 +258,9 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
         if len(list(set(indices[0][0:threshold]).intersection(set(true_neighbors)))) > 0:
             one_percent_retrieved += 1
 
-    one_percent_recall = (one_percent_retrieved/float(num_evaluated))*100
-    recall = (np.cumsum(recall)/float(num_evaluated))*100
+    one_percent_recall = (one_percent_retrieved / float(num_evaluated)) * 100
+    recall = (np.cumsum(recall) / float(num_evaluated)) * 100
+
     # print(recall)
     # print(np.mean(top1_similarity_score))
     # print(one_percent_recall)
@@ -233,7 +276,8 @@ def print_eval_stats(stats):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Evaluate model on PointNetVLAD (Oxford) dataset')
+    parser = argparse.ArgumentParser(description='Evaluate model on USyd/IntensityOxford (described in MinkLoc3D-SI) '
+                                                 'or PointNetVLAD (Oxford) dataset')
     parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     parser.add_argument('--model_config', type=str, required=True, help='Path to the model-specific configuration file')
     parser.add_argument('--weights', type=str, required=False, help='Trained model weights')
@@ -276,4 +320,3 @@ if __name__ == "__main__":
 
     stats = evaluate(model, device, params, args.log)
     print_eval_stats(stats)
-

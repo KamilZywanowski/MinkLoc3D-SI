@@ -1,5 +1,6 @@
 # Author: Jacek Komorowski
 # Warsaw University of Technology
+# Modified by: Kamil Zywanowski, Adam Banaszczyk, Michal Nowicki (Poznan University of Technology 2021)
 
 import torch
 import MinkowskiEngine as ME
@@ -37,7 +38,12 @@ class MinkLoc(torch.nn.Module):
 
     def forward(self, batch):
         # Coords must be on CPU, features can be on GPU - see MinkowskiEngine documentation
-        x = ME.SparseTensor(batch['features'], coords=batch['coords'])
+        feats = batch['features']
+        feats = feats.to('cuda')
+        coords = batch['coords']
+        coords = coords.to('cuda')
+
+        x = ME.SparseTensor(feats, coords)
         x = self.backbone(x)
 
         # x is (num_points, n_features) tensor

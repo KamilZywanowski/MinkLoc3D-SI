@@ -1,8 +1,10 @@
 # Author: Jacek Komorowski
 # Warsaw University of Technology
+# Modified by: Kamil Zywanowski, Adam Banaszczyk, Michal Nowicki (Poznan University of Technology 2021)
 
 # Dataset wrapper for Oxford laser scans dataset from PointNetVLAD project
 # For information on dataset see: https://github.com/mikacuy/pointnetvlad
+
 
 import os
 import pickle
@@ -24,7 +26,8 @@ class OxfordDataset(Dataset):
     """
     Dataset wrapper for Oxford laser scans dataset from PointNetVLAD project.
     """
-    def __init__(self, dataset_path, query_filename, transform=None, set_transform=None, max_elems=None):
+
+    def __init__(self, dataset_path, query_filename, n_points, max_distance, transform=None, set_transform=None, max_elems=None):
         # transform: transform applied to each element
         # set transform: transform applied to the entire set (anchor+positives+negatives); the same transform is applied
         if DEBUG:
@@ -37,7 +40,8 @@ class OxfordDataset(Dataset):
         self.transform = transform
         self.set_transform = set_transform
         self.max_elems = max_elems
-        self.n_points = 4096    # pointclouds in the dataset are downsampled to 4096 points
+        self.n_points = n_points  # pointclouds in the dataset are downsampled to 4096 points
+        self.max_distance = max_distance  # maximum point cloud range for
 
         cached_query_filepath = os.path.splitext(self.query_filepath)[0] + '_cached.pickle'
         if not os.path.exists(cached_query_filepath):
@@ -90,6 +94,13 @@ class OxfordDataset(Dataset):
         query_pc = self.load_pc(filename)
         if self.transform is not None:
             query_pc = self.transform(query_pc)
+        # Subsample (limited number of points) or apply padding to have the same number of points
+        # in batched clouds - required by augmentation functions
+        padlen = self.n_points - len(query_pc)
+        if padlen > 0:
+            query_pc = torch.nn.functional.pad(query_pc, (0, 0, 0, padlen), "constant", 0)
+        elif padlen < 0:
+            query_pc = query_pc[:self.n_points]
         return query_pc, ndx
 
     def get_item_by_filename(self, filename):
@@ -119,8 +130,65 @@ class OxfordDataset(Dataset):
         file_path = os.path.join(self.dataset_path, filename)
         pc = np.fromfile(file_path, dtype=np.float64)
         # coords are within -1..1 range in each dimension
-        assert pc.shape[0] == self.n_points * 3, "Error in point cloud shape: {}".format(file_name)
+        assert pc.shape[0] == self.n_points * 3, "Error in point cloud shape: {}".format(filename)
         pc = np.reshape(pc, (pc.shape[0] // 3, 3))
+        pc = pc[np.linalg.norm(pc[:, :3], axis=1) < self.max_distance]
+
+        pc = torch.tensor(pc, dtype=torch.float)
+        return pc
+
+
+class IntensityDataset(OxfordDataset):
+    """
+    Dataset wrapper for USyd and IntensityOxford laser scans datasets described in MinkLoc3D-SI.
+    """
+
+    def __init__(self, dataset_path, query_filename, n_points, max_distance, use_intensity, dataset, transform=None,
+                 set_transform=None, max_elems=None):
+        # transform: transform applied to each element
+        # set transform: transform applied to the entire set (anchor+positives+negatives); the same transform is applied
+        super().__init__(dataset_path, query_filename, n_points, max_distance, transform, set_transform, max_elems)
+        self.n_points = n_points
+        self.max_distance = max_distance  # maximum point cloud range for
+        self.use_intensity = use_intensity
+        if dataset == "USyd":
+            self.dtype = np.float32
+        elif dataset in ["Oxford", "IntensityOxford"]:
+            self.dtype = np.float64
+        else:
+            self.dtype = np.float32
+
+    def __len__(self):
+        return len(self.queries)
+
+    def __getitem__(self, ndx):
+        # Load point cloud and apply transform
+        filename = self.queries[ndx]['query']
+        query_pc = self.load_pc(filename)
+        if self.transform is not None:
+            query_pc = self.transform(query_pc)
+        # Subsample (limited number of points) or apply padding to have the same number of points
+        # in batched clouds - required by augmentation functions
+        padlen = self.n_points - len(query_pc)
+        if padlen > 0:
+            query_pc = torch.nn.functional.pad(query_pc, (0, 0, 0, padlen), "constant", 0)
+        elif padlen < 0:
+            query_pc = query_pc[:self.n_points]
+        return query_pc, ndx
+
+    def load_pc(self, filename):
+        # Load point cloud, does not apply any transform
+        # Returns Nx3 matrix or Nx4 matrix depending on the intensity value
+        file_path = os.path.join(self.dataset_path, filename)
+
+        pc = np.fromfile(file_path, dtype=self.dtype).reshape([-1, 4])
+        pc = pc[np.linalg.norm(pc[:, :3], axis=1) < self.max_distance]
+
+        if not self.use_intensity:
+            pc = pc[:, :3]
+
+        # shuffle points in case they are randomly subsampled later
+        np.random.shuffle(pc)
         pc = torch.tensor(pc, dtype=torch.float)
         return pc
 
@@ -183,24 +251,32 @@ class RandomFlip:
 class RandomRotation:
     def __init__(self, axis=None, max_theta=180, max_theta2=15):
         self.axis = axis
-        self.max_theta = max_theta      # Rotation around axis
-        self.max_theta2 = max_theta2    # Smaller rotation in random direction
+        self.max_theta = max_theta  # Rotation around axis
+        self.max_theta2 = max_theta2  # Smaller rotation in random direction
 
     def _M(self, axis, theta):
         return expm(np.cross(np.eye(3), axis / norm(axis) * theta)).astype(np.float32)
 
     def __call__(self, coords):
+        if coords.shape[-1] == 4:  # with intensity
+            coords_xyz = coords[:, :, :3]
+        else:  # no intensity
+            coords_xyz = coords
+
         if self.axis is not None:
             axis = self.axis
         else:
             axis = np.random.rand(3) - 0.5
         R = self._M(axis, (np.pi * self.max_theta / 180) * 2 * (np.random.rand(1) - 0.5))
         if self.max_theta2 is None:
-            coords = coords @ R
+            coords_xyz = coords_xyz @ R
         else:
             R_n = self._M(np.random.rand(3) - 0.5, (np.pi * self.max_theta2 / 180) * 2 * (np.random.rand(1) - 0.5))
-            coords = coords @ R @ R_n
-
+            coords_xyz = coords_xyz @ R @ R_n
+        if coords.shape[-1] == 4:  # with intensity
+            coords = torch.cat((coords_xyz, coords[:, :, 3].unsqueeze(dim=2)), axis=2)
+        else:  # no intensity
+            coords = coords_xyz
         return coords
 
 
@@ -209,7 +285,7 @@ class RandomTranslation:
         self.max_delta = max_delta
 
     def __call__(self, coords):
-        trans = self.max_delta * np.random.randn(1, 3)
+        trans = self.max_delta * np.random.randn(1, coords.shape[-1])
         return coords + trans.astype(np.float32)
 
 
@@ -229,7 +305,11 @@ class RandomShear:
 
     def __call__(self, coords):
         T = np.eye(3) + self.delta * np.random.randn(3, 3)
-        return coords @ T.astype(np.float32)
+        if coords.shape[-1] == 4:  # with intensity
+            coords = np.append(coords[:, :, :3] @ T.astype(np.float32), coords[:, :, 3].unsqueeze(dim=2), axis=2)
+        else:  # no intensity
+            coords = coords @ T.astype(np.float32)
+        return coords
 
 
 class JitterPoints:
@@ -242,6 +322,8 @@ class JitterPoints:
         self.p = p
 
     def __call__(self, e):
+        # Should be adapted to clouds with intensity values,
+        # now the sigma values for coordinates/intensities are the same
         """ Randomly jitter points. jittering is per point.
             Input:
               BxNx3 array, original batch of point clouds
@@ -255,7 +337,7 @@ class JitterPoints:
             m = torch.distributions.categorical.Categorical(probs=torch.tensor([1 - self.p, self.p]))
             mask = m.sample(sample_shape=sample_shape)
         else:
-            mask = torch.ones(sample_shape, dtype=torch.int64 )
+            mask = torch.ones(sample_shape, dtype=torch.int64)
 
         mask = mask == 1
         jitter = self.sigma * torch.randn_like(e[mask])
@@ -288,7 +370,7 @@ class RemoveRandomPoints:
             # Randomly select removal ratio
             r = random.uniform(self.r_min, self.r_max)
 
-        mask = np.random.choice(range(n), size=int(n*r), replace=False)   # select elements to remove
+        mask = np.random.choice(range(n), size=int(n * r), replace=False)  # select elements to remove
         e[mask] = torch.zeros_like(e[mask])
         return e
 
@@ -299,6 +381,7 @@ class RemoveRandomBlock:
     Erases fronto-parallel cuboid.
     Instead of erasing we set coords of removed points to (0, 0, 0) to retain the same number of points
     """
+
     def __init__(self, p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3)):
         self.p = p
         self.scale = scale
@@ -306,7 +389,7 @@ class RemoveRandomBlock:
 
     def get_params(self, coords):
         # Find point cloud 3D bounding box
-        flattened_coords = coords.view(-1, 3)
+        flattened_coords = coords.view(-1, coords.shape[-1])
         min_coords, _ = torch.min(flattened_coords, dim=0)
         max_coords, _ = torch.max(flattened_coords, dim=0)
         span = max_coords - min_coords
@@ -324,8 +407,8 @@ class RemoveRandomBlock:
 
     def __call__(self, coords):
         if random.random() < self.p:
-            x, y, w, h = self.get_params(coords)     # Fronto-parallel cuboid to remove
-            mask = (x < coords[..., 0]) & (coords[..., 0] < x+w) & (y < coords[..., 1]) & (coords[..., 1] < y+h)
+            x, y, w, h = self.get_params(coords)  # Fronto-parallel cuboid to remove
+            mask = (x < coords[..., 0]) & (coords[..., 0] < x + w) & (y < coords[..., 1]) & (coords[..., 1] < y + h)
             coords[mask] = torch.zeros_like(coords[mask])
         return coords
 
@@ -337,4 +420,3 @@ if __name__ == '__main__':
     my_dataset = OxfordDataset()
 
     e = my_dataset[10]
-

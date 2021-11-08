@@ -1,7 +1,8 @@
 [DEFAULT]
-num_points = 23000
-dataset = USyd
-dataset_folder = /ourdata_adas/USyd/
+num_points = 4096
+max_distance = 100
+dataset_name = Oxford
+dataset_folder = /ourdata_adas/benchmark_datasets/
 
 [TRAIN]
 num_workers = 4
@@ -21,4 +22,8 @@ loss = BatchHardTripletMarginLoss
 normalize_embeddings = False
 margin = 0.2
 
-train_file = training_queries_usyd_5m.pickle
+train_file = training_queries_baseline.pickle
+
+
+
+

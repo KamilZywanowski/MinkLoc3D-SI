@@ -1,6 +1,7 @@
 [DEFAULT]
 num_points = 4096
-
+max_distance = 100
+dataset_name = Oxford
 dataset_folder = /media/sf_Datasets/PointNetVLAD
 
 [TRAIN]

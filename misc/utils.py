@@ -1,6 +1,7 @@
 # Author: Jacek Komorowski
 # Warsaw University of Technology
-# Modified by: Kamil Zywanowski, Adam Banaszczyk (Poznan University of Technology)
+# Modified by: Kamil Zywanowski, Adam Banaszczyk, Michal Nowicki (Poznan University of Technology 2021)
+
 
 import os
 import configparser
@@ -16,12 +17,12 @@ class ModelParams:
 
         self.model_params_path = model_params_path
         self.model = params.get('model')
-        self.output_dim = params.getint('output_dim', 256)      # Size of the final descriptor
+        self.output_dim = params.getint('output_dim', 256)  # Size of the final descriptor
 
         # Add gating as the last step
         if 'vlad' in self.model.lower():
-            self.cluster_size = params.getint('cluster_size', 64)   # Size of NetVLAD cluster
-            self.gating = params.getboolean('gating', True)         # Use gating after the NetVlad
+            self.cluster_size = params.getint('cluster_size', 64)  # Size of NetVLAD cluster
+            self.gating = params.getboolean('gating', True)  # Use gating after the NetVlad
 
         #######################################################################
         # Model dependent
@@ -29,7 +30,13 @@ class ModelParams:
 
         if 'MinkFPN' in self.model:
             # Models using MinkowskiEngine
-            self.mink_quantization_size = np.array(params('mink_quantization_size'))
+            self.mink_quantization_size = [float(item) for item in params['mink_quantization_size'].split(',')]
+            self.version = params['version']
+            assert self.version in ['MinkLoc3D', 'MinkLoc3D-I', 'MinkLoc3D-S', 'MinkLoc3D-SI'], 'Supported versions ' \
+                                                                                                'are: MinkLoc3D, ' \
+                                                                                                'MinkLoc3D-I, ' \
+                                                                                                'MinkLoc3D-S, ' \
+                                                                                                'MinkLoc3D-SI '
             # Size of the local features from backbone network (only for MinkNet based models)
             # For PointNet-based models we always use 1024 intermediary features
             self.feature_size = params.getint('feature_size', 256)
@@ -80,6 +87,7 @@ class MinkLocParams:
     """
     Params for training MinkLoc models on Oxford dataset
     """
+
     def __init__(self, params_path, model_params_path):
         """
         Configuration files
@@ -88,7 +96,8 @@ class MinkLocParams:
         """
 
         assert os.path.exists(params_path), 'Cannot find configuration file: {}'.format(params_path)
-        assert os.path.exists(model_params_path), 'Cannot find model-specific configuration file: {}'.format(model_params_path)
+        assert os.path.exists(model_params_path), 'Cannot find model-specific configuration file: {}'.format(
+            model_params_path)
         self.params_path = params_path
         self.model_params_path = model_params_path
         self.model_params_path = model_params_path
@@ -97,7 +106,13 @@ class MinkLocParams:
 
         config.read(self.params_path)
         params = config['DEFAULT']
-        self.num_points = params.getint('num_points', 4096)
+        self.num_points = params.getint('num_points')
+        self.max_distance = params.getint('max_distance')
+
+        self.dataset_name = params.get('dataset_name')
+        assert self.dataset_name in ['USyd', 'IntensityOxford', 'Oxford'], 'Dataset should be USyd, IntensityOxford ' \
+                                                                           'or Oxford '
+
         self.dataset_folder = params.get('dataset_folder')
 
         params = config['TRAIN']
@@ -131,27 +146,37 @@ class MinkLocParams:
 
         self.epochs = params.getint('epochs', 20)
         self.weight_decay = params.getfloat('weight_decay', None)
-        self.normalize_embeddings = params.getboolean('normalize_embeddings', True)    # Normalize embeddings during training and evaluation
+        self.normalize_embeddings = params.getboolean('normalize_embeddings',
+                                                      True)  # Normalize embeddings during training and evaluation
         self.loss = params.get('loss')
 
         if 'Contrastive' in self.loss:
             self.pos_margin = params.getfloat('pos_margin', 0.2)
             self.neg_margin = params.getfloat('neg_margin', 0.65)
         elif 'Triplet' in self.loss:
-            self.margin = params.getfloat('margin', 0.4)    # Margin used in loss function
+            self.margin = params.getfloat('margin', 0.4)  # Margin used in loss function
         else:
             raise 'Unsupported loss function: {}'.format(self.loss)
 
-        self.aug_mode = params.getint('aug_mode', 1)    # Augmentation mode (1 is default)
+        self.aug_mode = params.getint('aug_mode', 1)  # Augmentation mode (1 is default)
 
         self.train_file = params.get('train_file')
         self.val_file = params.get('val_file', None)
 
-        self.eval_database_files = ['oxford_evaluation_database.pickle', 'business_evaluation_database.pickle',
-                                    'residential_evaluation_database.pickle', 'university_evaluation_database.pickle']
+        if self.dataset_name == 'USyd':
+            self.eval_database_files = ['usyd_evaluation_database.pickle']
+            self.eval_query_files = ['usyd_evaluation_query.pickle']
 
-        self.eval_query_files = ['oxford_evaluation_query.pickle', 'business_evaluation_query.pickle',
-                                 'residential_evaluation_query.pickle', 'university_evaluation_query.pickle']
+        elif self.dataset_name == 'IntensityOxford':
+            self.eval_database_files = ['intensityOxford_evaluation_database.pickle']
+            self.eval_query_files = ['intensityOxford_evaluation_query.pickle']
+
+        elif self.dataset_name == 'Oxford':
+            self.eval_database_files = ['oxford_evaluation_database.pickle', 'business_evaluation_database.pickle',
+                                        'residential_evaluation_database.pickle',
+                                        'university_evaluation_database.pickle']
+            self.eval_query_files = ['oxford_evaluation_query.pickle', 'business_evaluation_query.pickle',
+                                     'residential_evaluation_query.pickle', 'university_evaluation_query.pickle']
 
         assert len(self.eval_database_files) == len(self.eval_query_files)
 
@@ -172,4 +197,3 @@ class MinkLocParams:
 
         self.model_params.print()
         print('')
-
