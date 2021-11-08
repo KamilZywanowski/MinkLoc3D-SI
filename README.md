@@ -74,7 +74,7 @@ python generate_test_sets_intensityOxford.py
 To train **MinkLoc3D-SI** network, prepare the data as described above.
 Edit the configuration file (`config/config_usyd.txt` or `config/config_intensityOxford.txt`):
 - `num_points` - number of points in the point cloud. Points are randomly subsampled or zero-padding is applied during loading, if there number of points is too big/small
-- `max_distance` - maximum used distance from the sensor
+- `max_distance` - maximum used distance from the sensor, points further than `max_distance` are removed
 - `dataset_name` - **USyd** / **IntensityOxford** / **Oxford**
 - `dataset_folder` - path to the dataset folder
 - `batch_size_limit` parameter depending on available GPU memory. In our experiments with 10GB of GPU RAM in the case 
@@ -82,10 +82,9 @@ of USyd (23k points) the limit was set to 84, for IntensityOxford (4096 points) 
 
 Edit the model configuration file (`models/minkloc_config.txt`):
 - version - **MinkLoc3D** / **MinkLoc3D-I** / **MinkLoc3D-S** / **MinkLoc3D-SI** 
-- mink_quantization_size - desired quantization:
+- mink_quantization_size - desired quantization (IntensityOxford and Oxford coordinates are normalized [-1, 1], so the quantization parameters need to be adjusted accordingly!):
   - MinkLoc3D/3D-I: **q<sub>x</sub>,q<sub>y</sub>,q<sub>z</sub>** units: [m, m, m]
   - MinkLoc3D-S/3D-SI **q<sub>r</sub>,q<sub>theta</sub>,q<sub>phi</sub>** units: [m, deg, deg]
-   ####IntensityOxford and Oxford coordinates are normalized [-1, 1], so the quantization parameters need to be adjusted accordingly!
 
 To train the network, run:
 
