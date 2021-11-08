@@ -40,7 +40,7 @@ Modify the `PYTHONPATH` environment variable to include absolute path to the pro
 export PYTHONPATH=$PYTHONPATH:/.../.../MinkLoc3D-SI
 ```
 
-###Datasets
+### Datasets
 Preprocessed [University of Sydney Campus](http://its.acfr.usyd.edu.au/datasets/usyd-campus-dataset/) dataset (USyd) 
 and [Oxford RobotCar](https://robotcar-dataset.robots.ox.ac.uk/) dataset with intensity channel (IntensityOxford) 
 available [here](https://chmura.put.poznan.pl/s/5HxyZefrNLp64fj).
