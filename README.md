@@ -1,4 +1,4 @@
-# MinkLoc3D-SI: Point Cloud Based Large-Scale Place Recognition
+# MinkLoc3D-SI: 3D LiDAR place recognition with sparse convolutions,spherical coordinates, and intensity
 
 ### Introduction
 The 3D LiDAR place recognition aims to estimate a coarse localization in a previously seen environment based on
