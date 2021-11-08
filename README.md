@@ -14,7 +14,7 @@ efficient 3D sparse convolutions (MinkLoc3D). Our experiments show improved resu
 a noticeable improvement. As a result, MinkLoc3D-SI is suited for single scans obtained from a 3D LiDAR, 
 making it applicable in autonomous vehicles.
 
-![Fig1](images/Fig1.PNG)
+![Fig1](images/Fig1.png)
 
 ### Citation
 Paper details will be uploaded after acceptance.
