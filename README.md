@@ -17,7 +17,7 @@ making it applicable in autonomous vehicles.
 ![Fig1](images/Fig1.PNG)
 
 ### Citation
-###Paper details will be uploaded after acceptance.
+Paper details will be uploaded after acceptance.
 This work is an extension of Jacek Komorowski's [MinkLoc3D](https://github.com/jac99/MinkLoc3D).
 
 
