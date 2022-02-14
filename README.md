@@ -17,7 +17,27 @@ making it applicable in autonomous vehicles.
 ![Fig1](images/Fig1.png)
 
 ### Citation
-Paper details will be uploaded after acceptance.
+```
+@ARTICLE{9661423,
+  author={Żywanowski, Kamil and Banaszczyk, Adam and Nowicki, Michał R. and Komorowski, Jacek},
+  journal={IEEE Robotics and Automation Letters}, 
+  title={MinkLoc3D-SI: 3D LiDAR Place Recognition With Sparse Convolutions, Spherical Coordinates, and Intensity}, 
+  year={2022},
+  volume={7},
+  number={2},
+  pages={1079-1086},
+  doi={10.1109/LRA.2021.3136863}}
+  
+@INPROCEEDINGS{9423215,
+  author={Komorowski, Jacek},
+  booktitle={2021 IEEE Winter Conference on Applications of Computer Vision (WACV)}, 
+  title={MinkLoc3D: Point Cloud Based Large-Scale Place Recognition}, 
+  year={2021},
+  volume={},
+  number={},
+  pages={1789-1798},
+  doi={10.1109/WACV48630.2021.00183}}
+```
 This work is an extension of Jacek Komorowski's [MinkLoc3D](https://github.com/jac99/MinkLoc3D).
 
 
